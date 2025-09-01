@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_FUNCTIONAPP_NAME: 'sample-function-app'
-  RESOURCE_GROUP: 'rg-sample-function-app'
-  LOCATION: 'eastus'
+  AZURE_FUNCTIONAPP_NAME: 'actions.py'
+  RESOURCE_GROUP: 'cicd-poc'
+  LOCATION: Ccanada Central'
   PYTHON_VERSION: '3.11'
 
 jobs:
