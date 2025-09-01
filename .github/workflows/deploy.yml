@@ -1,0 +1,125 @@
+name: Deploy Azure Function App with Managed Identity
+
+on:
+  push:
+    branches: [ main, feature_hotfix ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_NAME: 'test-funApp'
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: '.'
+  PYTHON_VERSION: '3.11'
+  RESOURCE_GROUP: 'tej'
+  LOCATION: 'eastus'
+
+jobs:
+  build:
+    runs-on: personal
+    
+    steps:
+    - name: Checkout GitHub Action
+      uses: actions/checkout@v4
+
+    - name: Setup Python ${{ env.PYTHON_VERSION }} Environment
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Resolve Project Dependencies Using Pip
+      shell: bash
+      run: |
+        pushd '${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}'
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+        popd
+
+    - name: Upload function app package
+      uses: actions/upload-artifact@v3
+      with:
+        name: function-app-package
+        path: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+
+  deploy-function:
+    runs-on: personal
+    needs: [build]
+    
+    environment: 
+      name: 'production'
+
+    steps:
+    - name: Download function app package
+      uses: actions/download-artifact@v3
+      with:
+        name: function-app-package
+        path: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy Function App Code
+      uses: Azure/functions-action@v1
+      id: deploy-to-function
+      with:
+        app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
+        resource-group: ${{ env.RESOURCE_GROUP }}
+        package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+        scm-do-build-during-deployment: true
+        enable-oryx-build: true
+
+  test-deployment:
+    runs-on: personal
+    needs: [deploy-function]
+   
+    
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Wait for Function App to be ready
+      run: |
+        echo "Waiting for function app to be ready..."
+        sleep 60
+
+    - name: Test HTTP Trigger Function
+      run: |
+        echo "Testing HTTP trigger function..."
+        function_url="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/api/HttpTriggerFunction"
+        echo "Function URL: $function_url"
+        
+        response=$(curl -s -w "%{http_code}" -o response.json "$function_url")
+        http_code="${response: -3}"
+        
+        echo "HTTP Status Code: $http_code"
+        echo "Response:"
+        cat response.json
+        
+        if [ "$http_code" -eq 200 ]; then
+          echo "✅ Function test passed!"
+        else
+          echo "❌ Function test failed with status code: $http_code"
+          exit 1
+        fi
+
+    - name: Test Function App Health
+      run: |
+        echo "Testing function app health..."
+        health_url="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net/admin/host/status"
+        
+        response=$(curl -s -w "%{http_code}" -o health.json "$health_url")
+        http_code="${response: -3}"
+        
+        echo "Health Check HTTP Status Code: $http_code"
+        echo "Health Response:"
+        cat health.json
+        
+        if [ "$http_code" -eq 200 ]; then
+          echo "✅ Health check passed!"
+        else
+          echo "⚠️ Health check returned status code: $http_code"
+        fi
