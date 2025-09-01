@@ -1,0 +1,57 @@
+name: Deploy with Managed Identity
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_FUNCTIONAPP_NAME: 'sample-function-app'
+  RESOURCE_GROUP: 'rg-sample-function-app'
+  LOCATION: 'eastus'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted]   # Ensure this label matches your self-hosted runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+
+      - name: Login to Azure with Managed Identity
+        uses: azure/login@v2
+        with:
+          auth-type: IDENTITY
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Zip function app code
+        run: |
+          cd ${{ github.workspace }}
+          zip -r function-app.zip . -x "*.git*" "infra/*" ".github/*"
+
+      - name: Deploy Function Code
+        run: |
+          az functionapp deployment source config-zip \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AZURE_FUNCTIONAPP_NAME }} \
+            --src function-app.zip
+
+      - name: Test deployment
+        run: |
+          sleep 60
+          functionUrl="https://${{ env.AZURE_FUNCTIONAPP_NAME }}.azurewebsites.net"
+          echo "Function App URL: $functionUrl"
+          echo "Testing HTTP trigger..."
+          curl -f "$functionUrl/api/HttpTriggerFunction" || echo "Function might still be starting up"
